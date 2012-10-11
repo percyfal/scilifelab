@@ -4,6 +4,9 @@ import os
 import re
 import contextlib
 
+from cement.core.backend import minimal_logger
+LOG = minimal_logger(__name__)
+
 ## yes or no: http://stackoverflow.com/questions/3041986/python-command-line-yes-no-input
 def query_yes_no(question, default="yes", force=False):
     """Ask a yes/no question via raw_input() and return their answer.
@@ -132,3 +135,23 @@ def chdir(new_dir):
     finally:
         os.chdir(cur_dir)
 
+def dry(self, message, func, dry_run=True, verbose=False, *args, **kw):
+    """Wrapper that runs a function (runpipe) if flag dry_run isn't set, otherwise returns function call as string
+    
+    :param message: message describing function call
+    :param func: function to call
+    :param *args: positional arguments to pass to function
+    :param *kw: keyword arguments to pass to function
+    """
+    if dry_run:
+        LOG.info("(DRY_RUN): " + message + "\n")
+        return
+    if verbose:
+        LOG.info(message)
+    return func(*args, **kw)
+
+def test():
+    """Test print function"""
+    LOG.info("In test")
+    LOG.debug("In test")
+    
