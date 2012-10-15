@@ -109,6 +109,29 @@ def filtered_output(pattern, data):
         return re_obj.match(line) == None
     return filter(ignore, data)
 
+def ls(path, pattern=None):
+    """
+    Perform ls on a path, possibly filtering output
+    
+    :param path: a path
+    :param pattern: pattern to exclude 
+
+    :returns: ls of path
+    """
+    ## Sometimes read as string, sometimes as list...
+    if type(pattern) == str:
+        re_obj = re.compile(pattern.replace("\n", "|"))
+    elif type(pattern) == list:
+        re_obj = re.compile("|".join(pattern))
+    elif pattern is None:
+        re_obj = None
+    obj = os.listdir(path)
+    def ignore(fn):
+        if not re_obj:
+            return False
+        return re_obj.match(fn) != None
+    return [x for x in obj if not ignore(x)]
+    
 ## From bcbb
 def safe_makedir(dname):
     """Make a directory if it doesn't exist, handling concurrent race conditions.

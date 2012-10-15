@@ -4,14 +4,14 @@ import unittest
 
 import subprocess 
 
-from scilifelab.utils.misc import walk, filtered_walk, safe_makedir
+from scilifelab.utils.misc import walk, filtered_walk, safe_makedir, ls
 
 filedir = os.path.abspath(__file__)
 
 class TestMisc(unittest.TestCase):
     def setUp(self):
         dirs = ["data", "data/alignments", "data/nophix", "data/fastqc", "data/fastqc/nophix", "data/nophix/fastqc"]
-        [safe_makedir(x) for x in dirs]
+        [safe_makedir(x) for x in dirs if not os.path.exists(x)]
         [subprocess.check_call(["touch", os.path.join(x, "file1.txt")]) for x in dirs]
         [subprocess.check_call(["touch", os.path.join(x, "file2.txt")]) for x in dirs]
         self.pattern = "^file1"
@@ -42,3 +42,11 @@ class TestMisc(unittest.TestCase):
         flist = filtered_walk("data", filter_fn=self.filter_fn, include_dirs=["nophix"], exclude_dirs=["fastqc"])
         self.assertEqual(flist, ['data/nophix/file1.txt'])
 
+
+    def test_ls(self):
+        """Perform a ls of a directory"""
+        print os.path.join(os.path.dirname(filedir), "data")
+        flist = ls(path=os.path.join(os.path.dirname(filedir), "data"))
+        print flist
+        flist = ls(path=os.path.join(os.path.dirname(filedir), "data"), pattern="file2")
+        print flist
