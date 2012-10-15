@@ -3,6 +3,9 @@ import sys
 import os
 import re
 import contextlib
+import scilifelab.log
+
+LOG = scilifelab.log.minimal_logger(__name__)
 
 from cement.core.backend import minimal_logger
 LOG = minimal_logger(__name__)
@@ -118,6 +121,8 @@ def safe_makedir(dname):
         except OSError:
             if not os.path.isdir(dname):
                 raise
+    else:
+        LOG.warning("Directory {} already exists; not making directory".format(dname))
     return dname
 
 @contextlib.contextmanager
