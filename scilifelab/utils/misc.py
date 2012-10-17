@@ -163,23 +163,3 @@ def chdir(new_dir):
     finally:
         os.chdir(cur_dir)
 
-def dry(self, message, func, dry_run=True, verbose=False, *args, **kw):
-    """Wrapper that runs a function (runpipe) if flag dry_run isn't set, otherwise returns function call as string
-    
-    :param message: message describing function call
-    :param func: function to call
-    :param *args: positional arguments to pass to function
-    :param *kw: keyword arguments to pass to function
-    """
-    if dry_run:
-        LOG.info("(DRY_RUN): " + message + "\n")
-        return
-    if verbose:
-        LOG.info(message)
-    return func(*args, **kw)
-
-def test():
-    """Test print function"""
-    LOG.info("In test")
-    LOG.debug("In test")
-    
