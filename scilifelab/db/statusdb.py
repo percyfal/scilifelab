@@ -35,7 +35,9 @@ def sample_map_fn_id(sample_run_name, prj_sample):
         return None
 
 def _prune_ps_map(ps_map):
-    """Only use srm_ids that end with [ACGT]+ or "NoIndex"""
+    """Only use srm_ids that end with [ACGT]+ or "NoIndex" 
+
+    """
     if not ps_map:
         return None
     ret = {}
@@ -53,6 +55,10 @@ class SampleRunMetricsConnection(Couch):
         self.name_fc_view = {k.key:k for k in self.db.view("names/name_fc", reduce=False)}
         self.name_proj_view = {k.key:k for k in self.db.view("names/name_proj", reduce=False)}
         self.name_fc_proj_view = {k.key:k for k in self.db.view("names/name_fc_proj", reduce=False)}
+
+    def _setup_views(self):
+        """ """
+        pass
 
     def get_entry(self, name, field=None):
         """Retrieve entry from db for a given name, subset to field if
@@ -83,7 +89,9 @@ class SampleRunMetricsConnection(Couch):
         self.log.debug("retrieving sample ids subset by flowcell '{}' and sample_prj '{}'".format(fc_id, sample_prj))
         fc_sample_ids = [self.name_fc_view[k].id for k in self.name_fc_view.keys() if self.name_fc_view[k].value == fc_id] if fc_id else []
         prj_sample_ids = [self.name_proj_view[k].id for k in self.name_proj_view.keys() if self.name_proj_view[k].value == sample_prj] if sample_prj else []
-        sample_ids = list(set(fc_sample_ids + prj_sample_ids))
+        ## | -> union
+        sample_ids = list(set(fc_sample_ids) | set(prj_sample_ids))
+        self.log.debug("Number of samples: {}, number of fc samples: {}, number of project samples: {}".format(len(sample_ids), len(fc_sample_ids), len(prj_sample_ids)))
         return sample_ids
 
     def get_samples(self, fc_id=None, sample_prj=None):
@@ -125,43 +133,6 @@ class SampleRunMetricsConnection(Couch):
         except:
             self.log.warn("Calculation of average quality failed for sample {}, id {}".format(srm["name"], srm["_id"]))
             return None
-
-    def get_qc_data(self, sample_prj, fc_id=None):
-        """Get qc data for a project, possibly subset by project_id"""
-        p_con = ProjectSummaryConnection(url=self.url, username=self.user, password=self.pw)
-        project = p_con.get_entry(sample_prj)
-        application = project.get("application", None) if project else None
-        sample_ids = [self.name_proj_view[k].id for k in self.name_proj_view.keys() if self.name_proj_view[k].value == sample_prj]
-        if fc_id:
-            fc_sample_ids = [self.name_fc_view[k].id for k in self.name_fc_view.keys() if self.name_fc_view[k].value == fc_id]
-            sample_ids = list(set(sample_ids).intersection(set(fc_sample_ids)))
-        samples = [self.db.get(x) for x in sample_ids]
-        qcdata = {}
-        for s in samples:
-            qcdata[s["name"]]={"sample":s.get("barcode_name", None),
-                               "project":s.get("sample_prj", None),
-                               "lane":s.get("lane", None),
-                               "flowcell":s.get("flowcell", None),
-                               "date":s.get("date", None),
-                               "application":application,
-                               "TOTAL_READS":int(s.get("picard_metrics", {}).get("AL_PAIR", {}).get("TOTAL_READS", -1)),
-                               "PERCENT_DUPLICATION":s.get("picard_metrics", {}).get("DUP_metrics", {}).get("PERCENT_DUPLICATION", "-1.0"),
-                               "MEAN_INSERT_SIZE":float(s.get("picard_metrics", {}).get("INS_metrics", {}).get("MEAN_INSERT_SIZE", "-1.0")),
-                               "GENOME_SIZE":int(s.get("picard_metrics", {}).get("HS_metrics", {}).get("GENOME_SIZE", -1)),
-                               "FOLD_ENRICHMENT":float(s.get("picard_metrics", {}).get("HS_metrics", {}).get("FOLD_ENRICHMENT", "-1.0").replace(",", ".")),
-                               "PCT_USABLE_BASES_ON_TARGET":s.get("picard_metrics", {}).get("HS_metrics", {}).get("PCT_USABLE_BASES_ON_TARGET", "-1.0"),
-                               "PCT_TARGET_BASES_10X":s.get("picard_metrics", {}).get("HS_metrics", {}).get("PCT_TARGET_BASES_10X", "-1.0"),
-                               "PCT_PF_READS_ALIGNED":s.get("picard_metrics", {}).get("AL_PAIR", {}).get("PCT_PF_READS_ALIGNED", "-1.0"),
-                               }
-            target_territory = float(s.get("picard_metrics", {}).get("HS_metrics", {}).get("TARGET_TERRITORY", -1))
-            pct_labels = ["PERCENT_DUPLICATION", "PCT_USABLE_BASES_ON_TARGET", "PCT_TARGET_BASES_10X",
-                          "PCT_PF_READS_ALIGNED"]
-            for l in pct_labels:
-                if qcdata[s["name"]][l]:
-                    qcdata[s["name"]][l] = float(qcdata[s["name"]][l].replace(",", ".")) * 100
-            if qcdata[s["name"]]["FOLD_ENRICHMENT"] and qcdata[s["name"]]["GENOME_SIZE"] and target_territory:
-                qcdata[s["name"]]["PERCENT_ON_TARGET"] = float(qcdata[s["name"]]["FOLD_ENRICHMENT"]/ (float(qcdata[s["name"]]["GENOME_SIZE"]) / float(target_territory))) * 100
-        return qcdata
 
 
 class FlowcellRunMetricsConnection(Couch):
@@ -272,7 +243,7 @@ class ProjectSummaryConnection(Couch):
                 use_ps_map = True
                 use_bc_map = True
             if use_ps_map:
-                ps_map = v.get('sample_run_metrics', None)
+                ps_map = self._get_sample_run_metrics(v)
                 sample_map[k] = _prune_ps_map(ps_map)
             if use_bc_map or not sample_map[k]:
                 if not sample_map[k]: self.log.info("Using barcode map since no information in project summary for sample '{}'".format(k))
@@ -284,6 +255,15 @@ class ProjectSummaryConnection(Couch):
                 else:
                     self.log.warn("Sample {} has inconsistent mappings: ps_map {} vs barcode_match {}".format(k, ps_map, bc_map))
         return sample_map
+
+    def _get_sample_run_metrics(self, v):
+        if v.get('library_prep', None):
+            library_preps = v.get('library_prep')
+            return {k:v for kk in library_preps.keys() for k, v in library_preps[kk]['sample_run_metrics'].items()} if library_preps else None
+        else:
+            return v.get('sample_run_metrics', None)
+            
+
         
     def get_ordered_amount(self, project_id, rounded=True, dec=1):
         """Get (rounded) ordered amount of reads in millions. 
@@ -300,3 +280,36 @@ class ProjectSummaryConnection(Couch):
             return None
         else:
             return round(amount, dec)
+
+    def get_qc_data(self, sample_prj, fc_id=None):
+        """Get qc data for a project, possibly subset by flowcell"""
+        project = self.get_entry(sample_prj)
+        application = project.get("application", None) if project else None
+        s_con = SampleRunMetricsConnection(username=self.user, password=self.pw, url=self.url)
+        samples = s_con.get_samples(fc_id=fc_id, sample_prj=sample_prj)
+        qcdata = {}
+        for s in samples:
+            qcdata[s["name"]]={"sample":s.get("barcode_name", None),
+                               "project":s.get("sample_prj", None),
+                               "lane":s.get("lane", None),
+                               "flowcell":s.get("flowcell", None),
+                               "date":s.get("date", None),
+                               "application":application,
+                               "TOTAL_READS":int(s.get("picard_metrics", {}).get("AL_PAIR", {}).get("TOTAL_READS", -1)),
+                               "PERCENT_DUPLICATION":s.get("picard_metrics", {}).get("DUP_metrics", {}).get("PERCENT_DUPLICATION", "-1.0"),
+                               "MEAN_INSERT_SIZE":float(s.get("picard_metrics", {}).get("INS_metrics", {}).get("MEAN_INSERT_SIZE", "-1.0").replace(",", ".")),
+                               "GENOME_SIZE":int(s.get("picard_metrics", {}).get("HS_metrics", {}).get("GENOME_SIZE", -1)),
+                               "FOLD_ENRICHMENT":float(s.get("picard_metrics", {}).get("HS_metrics", {}).get("FOLD_ENRICHMENT", "-1.0").replace(",", ".")),
+                               "PCT_USABLE_BASES_ON_TARGET":s.get("picard_metrics", {}).get("HS_metrics", {}).get("PCT_USABLE_BASES_ON_TARGET", "-1.0"),
+                               "PCT_TARGET_BASES_10X":s.get("picard_metrics", {}).get("HS_metrics", {}).get("PCT_TARGET_BASES_10X", "-1.0"),
+                               "PCT_PF_READS_ALIGNED":s.get("picard_metrics", {}).get("AL_PAIR", {}).get("PCT_PF_READS_ALIGNED", "-1.0"),
+                               }
+            target_territory = float(s.get("picard_metrics", {}).get("HS_metrics", {}).get("TARGET_TERRITORY", -1))
+            pct_labels = ["PERCENT_DUPLICATION", "PCT_USABLE_BASES_ON_TARGET", "PCT_TARGET_BASES_10X",
+                          "PCT_PF_READS_ALIGNED"]
+            for l in pct_labels:
+                if qcdata[s["name"]][l]:
+                    qcdata[s["name"]][l] = float(qcdata[s["name"]][l].replace(",", ".")) * 100
+            if qcdata[s["name"]]["FOLD_ENRICHMENT"] and qcdata[s["name"]]["GENOME_SIZE"] and target_territory:
+                qcdata[s["name"]]["PERCENT_ON_TARGET"] = float(qcdata[s["name"]]["FOLD_ENRICHMENT"]/ (float(qcdata[s["name"]]["GENOME_SIZE"]) / float(target_territory))) * 100
+        return qcdata

@@ -65,7 +65,7 @@ def walk(rootdir):
         flist = flist + [os.path.join(root, x) for x in files]
     return flist
 
-def filtered_walk(rootdir, filter_fn, include_dirs=None, exclude_dirs=None): 
+def filtered_walk(rootdir, filter_fn, include_dirs=None, exclude_dirs=None, get_dirs=False): 
     """Perform a filtered directory walk.
 
     :param rootdir: Root directory
@@ -76,6 +76,7 @@ def filtered_walk(rootdir, filter_fn, include_dirs=None, exclude_dirs=None):
     :returns: Filtered file list 
     """
     flist = []
+    dlist = []
     for root, dirs, files in os.walk(rootdir):
         if include_dirs and len(set(root.split(os.sep)).intersection(set(include_dirs))) == 0:
             ## Also try re.search in case we have patterns
@@ -87,8 +88,12 @@ def filtered_walk(rootdir, filter_fn, include_dirs=None, exclude_dirs=None):
             continue
         if exclude_dirs and re.search("|".join(exclude_dirs), root):
             continue
+        dlist = dlist + [os.path.join(root, x) for x in dirs]
         flist = flist + [os.path.join(root, x) for x in filter(filter_fn, files)]
-    return flist
+    if get_dirs:
+        return dlist
+    else:
+        return flist
 
 def filtered_output(pattern, data):
     """
@@ -162,24 +167,3 @@ def chdir(new_dir):
         yield
     finally:
         os.chdir(cur_dir)
-
-def dry(self, message, func, dry_run=True, verbose=False, *args, **kw):
-    """Wrapper that runs a function (runpipe) if flag dry_run isn't set, otherwise returns function call as string
-    
-    :param message: message describing function call
-    :param func: function to call
-    :param *args: positional arguments to pass to function
-    :param *kw: keyword arguments to pass to function
-    """
-    if dry_run:
-        LOG.info("(DRY_RUN): " + message + "\n")
-        return
-    if verbose:
-        LOG.info(message)
-    return func(*args, **kw)
-
-def test():
-    """Test print function"""
-    LOG.info("In test")
-    LOG.debug("In test")
-    

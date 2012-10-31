@@ -11,11 +11,12 @@ program:
   pdflatex: pdflatex
   ps2pdf: ps2pdf
   barcode: barcode_sort_trim.py
+  snpEff: $SNPEFF_HOME
 algorithm:
   aligner: bwa
   demultiplexed: true
   max_errors: 2
-  num_cores: 1
+  num_cores: 8
   stringency: high
   quality_format: Illumina
   platform: illumina
@@ -30,7 +31,7 @@ algorithm:
   java_memory: 3g
   save_diskspace: true
   screen_contaminants: false
-  filter_phix: true
+  filter_phix: false
   upload_fastq: true
 
 distributed:
@@ -100,13 +101,13 @@ resources:
   ucsc_bigwig:
     memory: 3g
   gatk:
-    cores: 1
+    cores: 8
   bwa:
-    cores: 1
+    cores: 8
   mosaik:
     cores: 1
   bowtie:
-    cores: 1
+    cores: 8
   tophat:
     cores: 1
   cufflinks:

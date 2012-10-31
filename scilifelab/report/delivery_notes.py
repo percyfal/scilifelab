@@ -14,7 +14,7 @@ LOG = scilifelab.log.minimal_logger(__name__)
 def sample_status_note(project_id=None, flowcell_id=None, user=None, password=None, url=None,
                        use_ps_map=True, use_bc_map=False, check_consistency=False, 
                        ordered_million_reads=None, uppnex_id=None, customer_reference=None,
-                       qcinfo=False, **kw):
+                       no_qcinfo=True, **kw):
     """Make a sample status note. Used keywords:
 
     :param project_id: project id
@@ -28,11 +28,11 @@ def sample_status_note(project_id=None, flowcell_id=None, user=None, password=No
     :param ordered_million_reads: number of ordered reads in millions
     :param uppnex_id: the uppnex id
     :param customer_reference: customer project name
-    :param qcinfo: flag to print qc info
     """
     ## Cutoffs
     cutoffs = {
         "phix_err_cutoff" : 2.0,
+        "qv_cutoff" : 30,
         }
     
     ## parameters
@@ -51,12 +51,14 @@ def sample_status_note(project_id=None, flowcell_id=None, user=None, password=No
                         "scilifelab_name":"barcode_name", "start_date":"date", "rounded_read_count":"bc_count"}
     
     LOG.debug("got parameters {}".format(parameters))
-    ## Write qcinfo if needed
     output_data = {'stdout':StringIO(), 'stderr':StringIO()}
-    if qcinfo:
-        qcdata["stdout"].write("*** Quality stats ***\n")
-        qcdata["stdout"].write("Scilifelab ID\tPhiXError\tAvgQV\n")
-        
+    output_data["stdout"].write("\nQuality stats\n")
+    output_data["stdout"].write("************************\n")
+    output_data["stdout"].write("PhiX error cutoff: > {:3}\n".format(cutoffs['phix_err_cutoff']))
+    output_data["stdout"].write("QV cutoff        : < {:3}\n".format(cutoffs['qv_cutoff']))
+    output_data["stdout"].write("************************\n\n")
+    output_data["stdout"].write("{:>18}\t{:>12}\t{:>12}\t{:>12}\t{:>12}\n".format("Scilifelab ID", "PhiXError", "ErrorStatus", "AvgQV", "QVStatus"))
+    output_data["stdout"].write("{:>18}\t{:>12}\t{:>12}\t{:>12}\t{:>12}\n".format("=============", "=========", "===========", "=====", "========"))
     ## Connect and run
     s_con = SampleRunMetricsConnection(username=user, password=password, url=url)
     fc_con = FlowcellRunMetricsConnection(username=user, password=password, url=url)
@@ -67,9 +69,12 @@ def sample_status_note(project_id=None, flowcell_id=None, user=None, password=No
     notes = []
     if not project:
         LOG.warn("No such project '{}'".format(project_id))
-        return
+        return output_data
     samples = p_con.map_srm_to_name(project_id, include_all=False, fc_id=flowcell_id, use_ps_map=use_ps_map, use_bc_map=use_bc_map, check_consistency=check_consistency)
-    for k,v  in samples.items():
+    if len(samples) == 0:
+        LOG.warn("No samples for project '{}', flowcell '{}'. Maybe there are no sample run metrics in statusdb?".format(project_id, flowcell_id))
+        return output_data
+    for k,v in samples.items():
         s_param = {}
         LOG.debug("working on sample '{}', sample run metrics name '{}', id '{}'".format(v["sample"], k, v["id"]))
         s_param.update(parameters)
@@ -86,8 +91,13 @@ def sample_status_note(project_id=None, flowcell_id=None, user=None, password=No
         fc = "{}_{}".format(s["date"], s["flowcell"])
         s_param["phix_error_rate"] = fc_con.get_phix_error_rate(str(fc), s["lane"])
         s_param['avg_quality_score'] = s_con.calc_avg_qv(s["name"])
-        if qcinfo:
-            self.app._output_data["stdout"].write("{}\t{}\t{}\n".format(s["barcode_name"], s_param["phix_error_rate"], s_param["avg_quality_score"]))
+        err_stat = "OK"
+        qv_stat = "OK"
+        if s_param["phix_error_rate"] > cutoffs["phix_err_cutoff"]:
+            err_stat = "HIGH"
+        if s_param["avg_quality_score"] < cutoffs["qv_cutoff"]:
+            qv_stat = "LOW"
+        output_data["stdout"].write("{:>18}\t{:>12}\t{:>12}\t{:>12}\t{:>12}\n".format(s["barcode_name"], s_param["phix_error_rate"], err_stat, s_param["avg_quality_score"], qv_stat))
         s_param['rounded_read_count'] = round(float(s_param['rounded_read_count'])/1e6,1) if s_param['rounded_read_count'] else None
         s_param['ordered_amount'] = s_param.get('ordered_amount', p_con.get_ordered_amount(project_id))
         s_param['customer_reference'] = s_param.get('customer_reference', project.get('customer_reference'))
@@ -102,7 +112,7 @@ def sample_status_note(project_id=None, flowcell_id=None, user=None, password=No
         s_param['success'] = sequencing_success(s_param, cutoffs)
         s_param.update({k:"N/A" for k in s_param.keys() if s_param[k] is None or s_param[k] ==  ""})
         notes.append(make_note("{}_{}_{}.pdf".format(s["barcode_name"], s["date"], s["flowcell"]), headers, paragraphs, **s_param))
-    concatenate_notes(notes, "{}_{}_{}_sample_summary.pdf".format(project_id, s["date"], s["flowcell"]))
+    concatenate_notes(notes, "{}_{}_{}_sample_summary.pdf".format(project_id, s.get("date", None), s.get("flowcell", None)))
     return output_data
 
 def project_status_note(project_id=None, user=None, password=None, url=None,
