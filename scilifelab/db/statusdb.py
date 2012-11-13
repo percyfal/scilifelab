@@ -1,8 +1,109 @@
 """Database backend for connecting to statusdb"""
 import re
 from itertools import izip
+from couchdbkit import Document, StringProperty, IntegerProperty, DateProperty, DictProperty, ListProperty, FloatProperty
 from scilifelab.db import Couch
+import scilifelab.log 
 
+LOG = scilifelab.log.minimal_logger(__name__)
+
+def equal(a, b):
+    """Compare two statusdb documents for equality"""
+    if isinstance(a, StatusDBDocument):
+        a = dict(a)
+    if isinstance(b, StatusDBDocument):
+        b = dict(b)
+    a_keys = [str(x) for x in a.keys() if x not in ["_id", "_rev", "creation_time", "modification_time"]]
+    b_keys = [str(x) for x in b.keys() if x not in ["_id", "_rev", "creation_time", "modification_time"]]
+    keys = list(set(a_keys) | set(b_keys))
+    return {k:a.get(k, None) for k in keys} == {k:b.get(k, None) for k in keys}
+
+class StatusDBDocument(Document):
+    """StatusDBDocument: adds three required properties for statusdb documents"""
+    creation_time = StringProperty()
+    modification_time = StringProperty()
+    entity_type = StringProperty()
+
+    def __repr__(self):
+        if not hasattr(self, "name"):
+            return "{}".format(self.__class__)
+        else:
+            return "{} '{}'".format(self.__class__, str(self.name))
+
+class sample_run_metrics(StatusDBDocument):
+    """sample_run_metrics couchdb document"""
+    barcode_id = StringProperty()
+    barcode_name = StringProperty()
+    bc_count = IntegerProperty()
+    date = StringProperty()
+    flowcell = StringProperty()
+    lane = IntegerProperty()
+    sample_prj = StringProperty()
+    sequence = StringProperty()
+    barcode_type = StringProperty()
+    genomes_filter_out = StringProperty()
+    project_sample = StringProperty()
+    name = StringProperty()
+    
+    ## Metrics
+    fastqc = DictProperty()
+    fastq_scr = DictProperty()
+    picard_metrics = DictProperty()
+
+    @classmethod
+    def names(cls):
+        return {k["key"]:k["id"] for k in cls.view('names/name')}
+
+    @classmethod
+    def name_fc(cls):
+        return {k["key"]:k for k in cls.view('names/name_fc')}
+
+    @classmethod
+    def name_proj(cls):
+        return {k["key"]:k for k in cls.view('names/name_proj')}
+
+    @classmethod
+    def name_fc_proj(cls):
+        return {k["key"]:k for k in cls.view('names/name_fc_proj')}
+
+    @classmethod
+    def get_entry(self, name, field=None):
+        """Retrieve entry from db for a given name, subset to field if
+        that value is passed.
+
+        :param name: unique name
+        :param field: database field
+
+        :returns: value if entry exists, None otherwise
+        """
+        pass
+
+class FlowcellRunMetrics(StatusDBDocument):
+    RunInfo = DictProperty()
+    illumina = DictProperty
+    lanes = ListProperty()
+    run_info_yaml = DictProperty()
+    samplesheet_csv = DictProperty()
+    name = StringProperty()
+
+    @classmethod
+    def names(cls):
+        return {k["key"]:k["id"] for k in cls.view('names/name')}
+
+class project_summary(StatusDBDocument):
+    application = StringProperty()
+    customer_reference = StringProperty()
+    min_m_reads_per_sample_ordered = FloatProperty()
+    no_of_samples = IntegerProperty()
+    project_id = StringProperty()
+    samples = DictProperty()
+
+    @classmethod
+    def names(cls):
+        return {k["key"]:k["id"] for k in cls.view('project/project_id')}
+
+
+## Document functions
 def calc_avg_qv(srm):
     """Calculate average quality score for a sample based on
     FastQC results.
@@ -14,6 +115,9 @@ def calc_avg_qv(srm):
     
     :returns avg_qv: Average quality value score.
     """
+    if not isinstance(srm, sample_run_metrics):
+        LOG.warn("Expected 'sample_run_metrics' object. Got '{}'; exiting".format(type(srm)))
+        return None
     try:
         count = [float(x) for x in srm["fastqc"]["stats"]["Per sequence quality scores"]["Count"]]
         quality = srm["fastqc"]["stats"]["Per sequence quality scores"]["Quality"]
