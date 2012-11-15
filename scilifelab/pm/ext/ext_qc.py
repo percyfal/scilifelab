@@ -11,7 +11,7 @@ from scilifelab.utils.timestamp import utc_time
 from cement.core import backend, controller, handler, hook
 from scilifelab.pm.core.controller import AbstractBaseController
 from scilifelab.utils.timestamp import modified_within_days
-from scilifelab.bcbio.qc import FlowcellRunMetrics, SampleRunMetrics
+from scilifelab.db.statusdb import sample_run_metrics, flowcell_run_metrics
 from scilifelab.pm.bcbio.utils import validate_fc_directory_format, fc_id, fc_parts, fc_fullname
 
 class RunMetricsController(AbstractBaseController):

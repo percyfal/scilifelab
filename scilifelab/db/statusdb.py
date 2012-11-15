@@ -2,10 +2,51 @@
 import re
 from itertools import izip
 from couchdbkit import Document, StringProperty, IntegerProperty, DateProperty, DictProperty, ListProperty, FloatProperty
-from scilifelab.db import Couch
 import scilifelab.log 
 
 LOG = scilifelab.log.minimal_logger(__name__)
+
+def _match_project_name_to_barcode_name(project_sample_name, sample_run_name):
+    """Name mapping from project summary sample id to run info sample id"""
+    if not project_sample_name.startswith("P"):
+        sid = re.search("(\d+)_?([A-Z])?_",sample_run_name)
+        if str(sid.group(1)) == str(project_sample_name):
+            return True
+        m = re.search("(_index[0-9]+)", sample_run_name)
+        if not m:
+            index = ""
+        else:
+            index = m.group(1)
+        sid = re.search("([A-Za-z0-9\_]+)(\_index[0-9]+)?", sample_run_name.replace(index, ""))
+        if str(sid.group(1)) == str(project_sample_name):
+            return True
+        else:
+            return False
+    if str(sample_run_name).startswith(str(project_sample_name)):
+        return True
+    elif str(sample_run_name).startswith(str(project_sample_name).rstrip("F")):
+        return True
+    elif str(sample_run_name).startswith(str(project_sample_name).rstrip("B")):
+        return True
+    ## Add cases here
+    return False
+
+def sample_map_fn_id(sample_run_name, prj_sample):
+    if 'sample_run_metrics' in prj_sample.keys():
+        return prj_sample.get('sample_run_metrics').get(sample_run_name, None)
+    else:
+        return None
+
+def _prune_ps_map(ps_map):
+    """Only use srm_ids that end with [ACGT]+ or NoIndex
+    """
+    if not ps_map:
+        return None
+    ret = {}
+    for k, v in ps_map.items():
+        if re.search("_[ACGT]+$|_NoIndex$", k):
+            ret[k] = v
+    return ret
 
 def equal(a, b):
     """Compare two statusdb documents for equality"""
@@ -23,6 +64,7 @@ class StatusDBDocument(Document):
     creation_time = StringProperty()
     modification_time = StringProperty()
     entity_type = StringProperty()
+    log = LOG
 
     def __repr__(self):
         if not hasattr(self, "name"):
@@ -76,9 +118,69 @@ class sample_run_metrics(StatusDBDocument):
 
         :returns: value if entry exists, None otherwise
         """
-        pass
+        self.log.debug("retrieving entry in field '{}' for name '{}'".format(field, name))
+        if self.names().get(name, None) is None:
+            self.log.warn("no field '{}' for name '{}'".format(field, name))
+            return None
+        if field:
+            return self.get(self.names().get(name))[field]
+        else:
+            return self.get(self.names().get(name))
 
-class FlowcellRunMetrics(StatusDBDocument):
+    @classmethod
+    def get_sample_ids(self, fc_id=None, sample_prj=None):
+        """Retrieve sample ids subset by fc_id and/or sample_prj
+
+        :param fc_id: flowcell id
+        :param sample_prj: sample project name
+
+        :returns sample_ids: list of couchdb sample ids
+        """
+        self.log.debug("retrieving sample ids subset by flowcell '{}' and sample_prj '{}'".format(fc_id, sample_prj))
+        fc_sample_ids = [self.name_fc()[k]["id"] for k in self.name_fc().keys() if self.name_fc()[k]["value"] == fc_id] if fc_id else []
+        prj_sample_ids = [self.name_proj()[k]["id"] for k in self.name_proj().keys() if self.name_proj()[k]["value"] == sample_prj] if sample_prj else []
+
+        ## | -> union, & -> intersection
+        if len(fc_sample_ids) > 0 and len(prj_sample_ids) > 0:
+            sample_ids = list(set(fc_sample_ids) & set(prj_sample_ids))
+        else:
+            sample_ids = list(set(fc_sample_ids) | set(prj_sample_ids))
+        self.log.debug("Number of samples: {}, number of fc samples: {}, number of project samples: {}".format(len(sample_ids), len(fc_sample_ids), len(prj_sample_ids)))
+        return sample_ids
+
+    @classmethod
+    def get_samples(self, fc_id=None, sample_prj=None):
+        """Retrieve samples subset by fc_id and/or sample_prj
+
+        :param fc_id: flowcell id
+        :param sample_prj: sample project name
+
+        :returns samples: list of samples
+        """
+        self.log.debug("retrieving samples subset by flowcell '{}' and sample_prj '{}'".format(fc_id, sample_prj))
+        print fc_id
+        print sample_prj
+        sample_ids = self.get_sample_ids(fc_id, sample_prj)
+        print sample_ids
+        return [self.get(x) for x in sample_ids]
+        
+    def calc_avg_qv(self):
+        """Calculate average quality score for a sample based on
+        FastQC results.
+        
+        FastQC reports QV results in the field 'Per sequence quality scores', 
+        where the subfields 'Count' and 'Quality' refer to the counts of a given quality value.
+        
+        :returns avg_qv: Average quality value score.
+        """
+        try:
+            count = [float(x) for x in self["fastqc"]["stats"]["Per sequence quality scores"]["Count"]]
+            quality = self["fastqc"]["stats"]["Per sequence quality scores"]["Quality"]
+            return round(sum([x*int(y) for x,y in izip(count, quality)])/sum(count), 1)
+        except:
+            return None
+
+class flowcell_run_metrics(StatusDBDocument):
     RunInfo = DictProperty()
     illumina = DictProperty
     lanes = ListProperty()
@@ -89,6 +191,32 @@ class FlowcellRunMetrics(StatusDBDocument):
     @classmethod
     def names(cls):
         return {k["key"]:k["id"] for k in cls.view('names/name')}
+
+    @classmethod
+    def get_entry(self, name, field=None):
+        """Retrieve entry from db for a given name, subset to field if
+        that value is passed.
+        """
+        self.log.debug("retrieving field entry in field '{}' for name '{}'".format(field, name))
+        if self.names().get(name, None) is None:
+            self.log.warn("no field '{}' for name '{}'".format(field, name))
+            return None
+        if field:
+            return self.get(self.names().get(name))[field]
+        else:
+            return self.get(self.names().get(name))
+
+    @classmethod
+    def get_phix_error_rate(self, name, lane, avg=True):
+        """Get phix error rate"""
+        fc = self.get_entry(name)
+        phix_r1 = float(fc['illumina']['Summary']['read1'][lane]['ErrRatePhiX']) 
+        phix_r2 = float(fc['illumina']['Summary']['read3'][lane]['ErrRatePhiX'])
+        if avg:
+            return (phix_r1 + phix_r2)/2
+        else:
+            return (phix_r1, phix_r2)/2
+
 
 class project_summary(StatusDBDocument):
     application = StringProperty()
@@ -102,85 +230,7 @@ class project_summary(StatusDBDocument):
     def names(cls):
         return {k["key"]:k["id"] for k in cls.view('project/project_id')}
 
-
-## Document functions
-def calc_avg_qv(srm):
-    """Calculate average quality score for a sample based on
-    FastQC results.
-    
-    FastQC reports QV results in the field 'Per sequence quality scores', 
-    where the subfields 'Count' and 'Quality' refer to the counts of a given quality value.
-    
-    :param srm: sample run metrics
-    
-    :returns avg_qv: Average quality value score.
-    """
-    if not isinstance(srm, sample_run_metrics):
-        LOG.warn("Expected 'sample_run_metrics' object. Got '{}'; exiting".format(type(srm)))
-        return None
-    try:
-        count = [float(x) for x in srm["fastqc"]["stats"]["Per sequence quality scores"]["Count"]]
-        quality = srm["fastqc"]["stats"]["Per sequence quality scores"]["Quality"]
-        return round(sum([x*int(y) for x,y in izip(count, quality)])/sum(count), 1)
-    except:
-        return None
-
-def _match_project_name_to_barcode_name(project_sample_name, sample_run_name):
-    """Name mapping from project summary sample id to run info sample id"""
-    if not project_sample_name.startswith("P"):
-        sid = re.search("(\d+)_?([A-Z])?_",sample_run_name)
-        if str(sid.group(1)) == str(project_sample_name):
-            return True
-        m = re.search("(_index[0-9]+)", sample_run_name)
-        if not m:
-            index = ""
-        else:
-            index = m.group(1)
-        sid = re.search("([A-Za-z0-9\_]+)(\_index[0-9]+)?", sample_run_name.replace(index, ""))
-        if str(sid.group(1)) == str(project_sample_name):
-            return True
-        else:
-            return False
-    if str(sample_run_name).startswith(str(project_sample_name)):
-        return True
-    elif str(sample_run_name).startswith(str(project_sample_name).rstrip("F")):
-        return True
-    elif str(sample_run_name).startswith(str(project_sample_name).rstrip("B")):
-        return True
-    ## Add cases here
-    return False
-
-def sample_map_fn_id(sample_run_name, prj_sample):
-    if 'sample_run_metrics' in prj_sample.keys():
-        return prj_sample.get('sample_run_metrics').get(sample_run_name, None)
-    else:
-        return None
-
-def _prune_ps_map(ps_map):
-    """Only use srm_ids that end with [ACGT]+ or NoIndex
-    """
-    if not ps_map:
-        return None
-    ret = {}
-    for k, v in ps_map.items():
-        if re.search("_[ACGT]+$|_NoIndex$", k):
-            ret[k] = v
-    return ret
-
-class SampleRunMetricsConnection(Couch):
-    ## FIXME: set time limits on which entries to include?
-    def __init__(self, **kwargs):
-        super(SampleRunMetricsConnection, self).__init__(**kwargs)
-        self.db = self.con["samples"]
-        self.name_view = {k.key:k.id for k in self.db.view("names/name", reduce=False)}
-        self.name_fc_view = {k.key:k for k in self.db.view("names/name_fc", reduce=False)}
-        self.name_proj_view = {k.key:k for k in self.db.view("names/name_proj", reduce=False)}
-        self.name_fc_proj_view = {k.key:k for k in self.db.view("names/name_fc_proj", reduce=False)}
-    
-    def _setup_views(self):
-        """ """
-        pass
-
+    @classmethod
     def get_entry(self, name, field=None):
         """Retrieve entry from db for a given name, subset to field if
         that value is passed.
@@ -190,118 +240,18 @@ class SampleRunMetricsConnection(Couch):
 
         :returns: value if entry exists, None otherwise
         """
-        self.log.debug("retrieving entry in field '{}' for name '{}'".format(field, name))
-        if self.name_view.get(name, None) is None:
+        self.log.debug("retrieving field entry in field '{}' for name '{}'".format(field, name))
+        if self.names().get(name, None) is None:
             self.log.warn("no field '{}' for name '{}'".format(field, name))
             return None
         if field:
-            return self.db.get(self.name_view.get(name))[field]
+            return self.get(self.names().get(name))[field]
         else:
-            return self.db.get(self.name_view.get(name))
-
-    def get_sample_ids(self, fc_id=None, sample_prj=None):
-        """Retrieve sample ids subset by fc_id and/or sample_prj
-
-        :param fc_id: flowcell id
-        :param sample_prj: sample project name
-
-        :returns sample_ids: list of couchdb sample ids
-        """
-        self.log.debug("retrieving sample ids subset by flowcell '{}' and sample_prj '{}'".format(fc_id, sample_prj))
-        fc_sample_ids = [self.name_fc_view[k].id for k in self.name_fc_view.keys() if self.name_fc_view[k].value == fc_id] if fc_id else []
-        prj_sample_ids = [self.name_proj_view[k].id for k in self.name_proj_view.keys() if self.name_proj_view[k].value == sample_prj] if sample_prj else []
-        ## | -> union, & -> intersection
-        if len(fc_sample_ids) > 0 and len(prj_sample_ids) > 0:
-            sample_ids = list(set(fc_sample_ids) & set(prj_sample_ids))
-        else:
-            sample_ids = list(set(fc_sample_ids) | set(prj_sample_ids))
-        self.log.debug("Number of samples: {}, number of fc samples: {}, number of project samples: {}".format(len(sample_ids), len(fc_sample_ids), len(prj_sample_ids)))
-        return sample_ids
-
-    def get_samples(self, fc_id=None, sample_prj=None):
-        """Retrieve samples subset by fc_id and/or sample_prj
-
-        :param fc_id: flowcell id
-        :param sample_prj: sample project name
-
-        :returns samples: list of samples
-        """
-        self.log.debug("retrieving samples subset by flowcell '{}' and sample_prj '{}'".format(fc_id, sample_prj))
-        sample_ids = self.get_sample_ids(fc_id, sample_prj)
-        return [self.db.get(x) for x in sample_ids]
+            return self.get(self.names().get(name))
         
-    def set_db(self):
-        """Make sure we don't change db from samples"""
-        pass
-
-
-class FlowcellRunMetricsConnection(Couch):
-    def __init__(self, **kwargs):
-        super(FlowcellRunMetricsConnection, self).__init__(**kwargs)
-        if not self.con:
-            return
-        self.db = self.con["flowcells"]
-        self.name_view = {k.key:k.id for k in self.db.view("names/name", reduce=False)}
-
-    def set_db(self):
-        """Make sure we don't change db from flowcells"""
-        pass
-
-    def get_entry(self, name, field=None):
-        """Retrieve entry from db for a given name, subset to field if
-        that value is passed.
-        """
-        self.log.debug("retrieving field entry in field '{}' for name '{}'".format(field, name))
-        if self.name_view.get(name, None) is None:
-            self.log.warn("no field '{}' for name '{}'".format(field, name))
-            return None
-        if field:
-            return self.db.get(self.name_view.get(name))[field]
-        else:
-            return self.db.get(self.name_view.get(name))
-
-    def get_phix_error_rate(self, name, lane, avg=True):
-        """Get phix error rate"""
-        fc = self.get_entry(name)
-        phix_r1 = float(fc['illumina']['Summary']['read1'][lane]['ErrRatePhiX']) 
-        phix_r2 = float(fc['illumina']['Summary']['read3'][lane]['ErrRatePhiX'])
-        if avg:
-            return (phix_r1 + phix_r2)/2
-        else:
-            return (phix_r1, phix_r2)/2
-
-class ProjectSummaryConnection(Couch):
-    def __init__(self, **kwargs):
-        super(ProjectSummaryConnection, self).__init__(**kwargs)
-        if not self.con:
-            return
-        self.db = self.con["projects"]
-        self.name_view = {k.key:k.id for k in self.db.view("project/project_id", reduce=False)}
-
-    def get_entry(self, name, field=None):
-        """Retrieve entry from db for a given name, subset to field if
-        that value is passed.
-
-        :param name: unique name
-        :param field: database field
-
-        :returns: value if entry exists, None otherwise
-        """
-        self.log.debug("retrieving field entry in field '{}' for name '{}'".format(field, name))
-        if self.name_view.get(name, None) is None:
-            self.log.warn("no field '{}' for name '{}'".format(field, name))
-            return None
-        if field:
-            return self.db.get(self.name_view.get(name))[field]
-        else:
-            return self.db.get(self.name_view.get(name))
-
-    def set_db(self):
-        """Make sure we don't change db from projects"""
-        pass
-
+    @classmethod
     def get_project_sample(self, project_id, sample_run_name, use_ps_map=True, use_bc_map=False,  check_consistency=False):
-        """Get project sample name for a SampleRunMetrics barcode_name.
+        """Get project sample name for a sample_run_metrics barcode_name.
         
         :param project_id: the project id
         :param barcode_name: the barcode name of a sample run
@@ -346,6 +296,7 @@ class ProjectSummaryConnection(Couch):
                     return project_samples[project_sample_name]
         return None
 
+    @classmethod
     def map_srm_to_name(self, project_id, include_all=True, **args):
         """Map sample run metrics names to project sample names for a
         project, possibly subset by flowcell id.
@@ -364,6 +315,7 @@ class ProjectSummaryConnection(Couch):
                 srm_to_name.update({x:{"sample":k,"id":y} for x,y in v.items()})
         return srm_to_name
 
+    @classmethod
     def map_name_to_srm(self, project_id, fc_id=None, use_ps_map=True, use_bc_map=False,  check_consistency=False):
         """Map project sample names to sample run metrics names for a
         project, possibly subset by flowcell id.
@@ -381,7 +333,7 @@ class ProjectSummaryConnection(Couch):
         if project_samples is None:
             return None
         sample_map = {}
-        s_con = SampleRunMetricsConnection(username=self.user, password=self.pw, url=self.url)
+        s_con = sample_run_metrics()
         srm_samples = s_con.get_samples(fc_id=fc_id, sample_prj=project_id)
         for k, v in project_samples.items():
             sample_map[k] = None
@@ -409,6 +361,7 @@ class ProjectSummaryConnection(Couch):
         else:
             return v.get('sample_run_metrics', None)
 
+    @classmethod
     def get_ordered_amount(self, project_id, rounded=True, dec=1):
         """Get (rounded) ordered amount of reads in millions. 
 
@@ -425,11 +378,16 @@ class ProjectSummaryConnection(Couch):
         else:
             return round(amount, dec)
 
-    def get_qc_data(self, sample_prj, fc_id=None):
+    @classmethod
+    def get_qc_data(self, sample_prj, fc_id=None, sample_db="samples"):
         """Get qc data for a project, possibly subset by flowcell"""
         project = self.get_entry(sample_prj)
-        application = project.get("application", None) if project else None
-        s_con = SampleRunMetricsConnection(username=self.user, password=self.pw, url=self.url)
+        application = project.application
+        print dir(self)
+        s_con = sample_run_metrics()
+        s_con.set_db(sample_db)
+        print s_con.names()
+
         samples = s_con.get_samples(fc_id=fc_id, sample_prj=sample_prj)
         qcdata = {}
         for s in samples:
@@ -457,3 +415,5 @@ class ProjectSummaryConnection(Couch):
             if qcdata[s["name"]]["FOLD_ENRICHMENT"] and qcdata[s["name"]]["GENOME_SIZE"] and target_territory:
                 qcdata[s["name"]]["PERCENT_ON_TARGET"] = float(qcdata[s["name"]]["FOLD_ENRICHMENT"]/ (float(qcdata[s["name"]]["GENOME_SIZE"]) / float(target_territory))) * 100
         return qcdata
+
+

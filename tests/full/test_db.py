@@ -12,7 +12,7 @@ from itertools import izip
 
 from classes import PmFullTest
 from scilifelab.pm.ext.ext_qc import update_fn
-from scilifelab.db.statusdb import sample_run_metrics, FlowcellRunMetrics, project_summary, calc_avg_qv, equal, StatusDBDocument
+from scilifelab.db.statusdb import sample_run_metrics, flowcell_run_metrics, project_summary, calc_avg_qv, equal
 from scilifelab.pm.bcbio.utils import fc_id, fc_parts, fc_fullname
 from scilifelab.utils.timestamp import utc_time
 
@@ -89,4 +89,6 @@ class TestCouchDB(unittest.TestCase):
         db = server.get_or_create_db("samples-test")
         sample_run_metrics.set_db(db)
         for n in sample_run_metrics.view("names/name"):
-            print n["id"]
+            s = sample_run_metrics.get(n["id"])
+            print s.calc_avg_qv()
+            print calc_avg_qv(s)

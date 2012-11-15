@@ -1,10 +1,10 @@
 import os
 import unittest
-import ConfigParser
 import logbook
 import pandas as pd
+from couchdbkit import Server
 from pandas.core.format import set_eng_float_format
-from scilifelab.db.statusdb import ProjectSummaryConnection
+from scilifelab.db.statusdb import project_summary
 from ..classes import SciLifeTest
 
 filedir = os.path.abspath(__file__)
@@ -13,21 +13,13 @@ LOG = logbook.Logger(__name__)
 
 class TestQCData(SciLifeTest):
     def setUp(self):
-        if not os.path.exists(os.path.join(os.getenv("HOME"), "dbcon.ini")):
-            self.url = None
-            self.user = None
-            self.pw = None
-            self.examples = {}
-            LOG.warning("No such file {}; will not run database connection tests".format(os.path.join(os.getenv("HOME"), "dbcon.ini")))
-        else:
-            config = ConfigParser.ConfigParser()
-            config.readfp(open(os.path.join(os.getenv("HOME"), "dbcon.ini")))
-            self.url = config.get("couchdb", "url")
-            self.user = config.get("couchdb", "username")
-            self.pw = config.get("couchdb", "password")
-            self.examples = {"sample":config.get("examples", "sample"),
-                             "flowcell":config.get("examples", "flowcell"),
-                             "project":config.get("examples", "project")}
+        self.uri = "http://localhost:5984"
+        self.examples = {"sample":"2_120924_AC003CCCXX_ACAGTG",
+                         "flowcell":"AC003CCCXX",
+                         "project":"J.Doe_00_01"}
+        self.server = Server()
+        self.con = project_summary(uri=self.uri)
+        self.con.set_db(self.server["projects-test"])
 
     def tearDown(self):
         pass
@@ -36,8 +28,8 @@ class TestQCData(SciLifeTest):
         if not self.examples:
             LOG.info("Not running test")
             return
-        p_con = ProjectSummaryConnection(username=self.user, password=self.pw, url=self.url)
-        qcdata = p_con.get_qc_data(self.examples["project"], self.examples["flowcell"])
+        qcdata = self.con.get_qc_data(self.examples["project"], self.examples["flowcell"], sample_db="samples-test")
+        print qcdata
         qcdf = pd.DataFrame(qcdata)
         print qcdf
         set_eng_float_format(accuracy=1, use_eng_prefix=True)
