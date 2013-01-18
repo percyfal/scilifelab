@@ -5,7 +5,7 @@ import os
 import glob
 
 setup(name = "scilifelab",
-      version = "0.2.1",
+      version = "0.2.2",
       author = "Science for Life Laboratory",
       author_email = "genomics_support@scilifelab.se",
       description = "Useful scripts for use at SciLifeLab",
@@ -26,13 +26,16 @@ setup(name = "scilifelab",
         # packages and not in virtualenv
         #"pandas >= 0.9",
         "biopython",
-        "psutil",
+        "rst2pdf",
+        #"psutil",
         ],
       test_suite = 'nose.collector',
       packages=find_packages(exclude=['tests']),
       package_data = {'scilifelab':[
-            'data/grf/*',
-            ]}
+          'data/grf/*',
+          'data/templates/*.mako',
+          'data/templates/rst/*',
+          ]}
       )
 
 os.system("git rev-parse --short --verify HEAD > ~/.scilifelab_version")
